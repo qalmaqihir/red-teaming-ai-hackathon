@@ -1,0 +1,84 @@
+/* General styles */
+body {
+    font-family: Arial, sans-serif;
+    color: #333;
+    background-color: #f0f2f6;
+}
+
+/* Header styles */
+.header {
+    display: flex;
+    align-items: center;
+    background-color: #0e1117;
+    padding: 1rem;
+    border-radius: 5px;
+    margin-bottom: 2rem;
+}
+
+.logo {
+    width: 50px;
+    height: 50px;
+    margin-right: 1rem;
+}
+
+.header h1 {
+    color: #ffffff;
+    margin: 0;
+}
+
+/* Sidebar styles */
+.sidebar .sidebar-content {
+    background-color: #1e2a3a;
+}
+
+/* Button styles */
+.stButton > button {
+    width: 100%;
+    border-radius: 5px;
+    border: none;
+    color: #fff;
+    background-color: #0078d4;
+    transition: all 0.3s ease;
+}
+
+.stButton > button:hover {
+    background-color: #005a9e;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+}
+
+/* Footer styles */
+.footer {
+    position: fixed;
+    left: 0;
+    bottom: 0;
+    width: 100%;
+    background-color: #0e1117;
+    color: white;
+    text-align: center;
+    padding: 10px 0;
+}
+
+/* Custom styles for different sections */
+.home-section {
+    background-color: #e6f2ff;
+    padding: 2rem;
+    border-radius: 10px;
+}
+
+.attack-section {
+    background-color: #fff0f0;
+    padding: 2rem;
+    border-radius: 10px;
+}
+
+.tool-section {
+    background-color: #f0fff0;
+    padding: 2rem;
+    border-radius: 10px;
+}
+
+.results-section {
+    background-color: #f5f5f5;
+    padding: 2rem;
+    border-radius: 10px;
+}

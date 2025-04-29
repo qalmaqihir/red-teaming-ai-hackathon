@@ -81,7 +81,7 @@ This module will host a comprehensive suite of tests, each designed to evaluate 
 
 2. **Set Up a Virtual Environment (Optional but Recommended)**:
    ```bash
-   python -m venv venv
+   python3 -m venv venv
    source venv/bin/activate  # On Windows use: venv\Scripts\activate
    ```
 

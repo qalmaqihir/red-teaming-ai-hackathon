@@ -1,0 +1,164 @@
+
+"""
+Odd less user-friendly UI app.py
+
+
+# import streamlit as st
+# from components import home, art_module, counterfit_module, pyrit_module, results, model_scan_module, most_common_attacks_module
+# import base64
+
+# # Configure the main page
+# st.set_page_config(page_title="AI Red Teaming Platform", layout="wide")
+
+# # Custom CSS for styling
+# def local_css(file_name):
+#     with open(file_name, "r") as f:
+#         st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
+
+# # Load custom CSS
+# local_css("./assets/styles.css")
+
+# # Function to encode an image to base64
+# def get_image_base64(image_path):
+#     with open(image_path, "rb") as img_file:
+#         return base64.b64encode(img_file.read()).decode()
+
+
+# # Header with logo
+# logo_base64 = get_image_base64("./assets/logo.jpg")
+# st.markdown(
+#     f"""
+#     <div class="header">
+#         <img src="data:image/png;base64,{logo_base64}" alt="Logo" class="logo">
+#         <h1>AI Red Teaming Platform</h1>
+#     </div>
+#     """,
+#     unsafe_allow_html=True
+# )
+
+# # Sidebar for navigation
+# st.sidebar.title("Navigation")
+# pages = ["Home", "Most Common LLM Attacks", "Adversarial Robustness Toolbox", "Counterfit", "PyRIT", "Model Scan", "Results & Reports"]
+# page = st.sidebar.radio("Go to", pages, format_func=lambda x: f"📌 {x}")
+
+# # Main section switching with hover effect
+# for p in pages:
+#     if st.sidebar.button(p, key=f"btn_{p}"):
+#         page = p
+
+# # Main content
+# if page == "Home":
+#     home.display_home()
+# elif page == "Most Common LLM Attacks":
+#     most_common_attacks_module.display_most_common_llm_attacks_page()
+# elif page == "Adversarial Robustness Toolbox (ART)":
+#     art_module.display_art_section()
+# elif page == "Counterfit":
+#     counterfit_module.display_counterfit_section()
+# elif page == "PyRIT":
+#     pyrit_module.display_pyrit_section()
+# elif page == "Model Scan":
+#     model_scan_module.display_model_scan_section()
+# elif page == "Results & Reports":
+#     results.display_results_section()
+
+# # Footer
+# st.markdown(
+#     """
+#     <div class="footer">
+#         <p>A simple demo app.</p>
+#     </div>
+#     """,
+#     unsafe_allow_html=True
+# )
+
+"""
+############################################################################
+"""
+
+## home.py
+
+import streamlit as st
+from components import home, art_module, counterfit_module, pyrit_module, results, most_common_attacks_module
+
+# Configure the main page
+# st.set_page_config(page_title="AI Red Teaming Platform", layout="wide")
+
+# # Initialize session state
+# if 'page' not in st.session_state:
+#     st.session_state.page = 'home'
+
+def set_page(page_name):
+    st.session_state.page = page_name
+
+def display_home():
+    st.title("Welcome to the AI Red Teaming Platform")
+    st.markdown(
+        """
+        This platform allows you to test your AI models for vulnerabilities using state-of-the-art tools:
+        - **Most Common LLM Attacks**
+        - **Adversarial Robustness Toolbox (ART)** for adversarial attack simulations.
+        - **Counterfit** for attack surface exploration.
+        - **PyRIT** for risk identification and compliance evaluation.
+
+        Navigate through the sidebar to start testing and evaluating your AI models.
+        """
+    )
+
+    # Quick Start Section
+    st.subheader("Quick Start")
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    with col1:
+        st.button("Run Most Common LLM Attacks", on_click=set_page, args=('llm_attacks',))
+    with col2:
+        st.button("Run Adversarial Robustness Toolbox", on_click=set_page, args=('art',))
+    with col3:
+        st.button("Run Counterfit", on_click=set_page, args=('counterfit',))
+    with col4:
+        st.button("Run PyRIT", on_click=set_page, args=('pyrit',))
+    with col5:
+        st.button("Run Model Scan", on_click=set_page, args=('model_scan',))
+    with col6:
+        st.button("Get Results & Reports", on_click=set_page, args=('results',))
+
+    # Display recent activity
+    st.subheader("Recent Activity")
+    st.markdown("No recent activities to display.")
+
+# Main content based on session state
+if st.session_state.page == 'home':
+    display_home()
+elif st.session_state.page == 'llm_attacks':
+    most_common_attacks_module.display_most_common_llm_attacks_page()
+elif st.session_state.page == 'art':
+    art_module.display_art_section()
+elif st.session_state.page == 'counterfit':
+    counterfit_module.display_counterfit_section()
+elif st.session_state.page == 'pyrit':
+    pyrit_module.display_pyrit_section()
+elif st.session_state.page == 'model_scan':
+    # Assuming you have a model_scan_module, otherwise replace with appropriate function
+    st.write("Model Scan page")  # Placeholder
+elif st.session_state.page == 'results':
+    results.display_results_section()
+
+# # Sidebar for navigation (optional, can be removed if not needed)
+st.sidebar.title("Navigation")
+if st.sidebar.button("Home"):
+    set_page('home')
+if st.sidebar.button("Most Common LLM Attacks"):
+    set_page('llm_attacks')
+if st.sidebar.button("Adversarial Robustness Toolbox (ART)"):
+    set_page('art')
+if st.sidebar.button("Counterfit"):
+    set_page('counterfit')
+if st.sidebar.button("PyRIT"):
+    set_page('pyrit')
+if st.sidebar.button("Model Scan"):
+    set_page('model_scan')
+if st.sidebar.button("Results & Reports"):
+    set_page('results')
+
+"""
+
+#################################################################
