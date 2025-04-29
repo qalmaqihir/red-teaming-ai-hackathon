@@ -473,11 +473,11 @@ def display_garak():
                 for report in sorted(reports, reverse=True)[:5]:
                     file_path = report.resolve()
                     file_url = f"file://{urllib.parse.quote(str(file_path))}"
-                    # st.markdown(f"[{report.name}]({file_url})")
-                    st.markdown(
-                        f'<a href="{file_url}" target="_blank">{report.name}</a>',
-                        unsafe_allow_html=True,
-                    )
+                    st.markdown(f"[{report.name}]({file_url})")
+                    # st.markdown(
+                    #     f'<a href="{file_url}" target="_blank">{report.name}</a>',
+                    #     unsafe_allow_html=True,
+                    # )
             else:
                 st.write("No previous reports found")
         else:
