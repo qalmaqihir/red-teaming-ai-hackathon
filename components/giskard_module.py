@@ -8,6 +8,7 @@ import logging
 import os
 import uuid
 import json
+import sys
 
 # Import OpenAI and Anthropic
 try:
@@ -24,16 +25,20 @@ except ImportError:
     logging.error("langchain-anthropic not installed")
     raise ImportError("langchain-anthropic not installed")
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('giskard_red_teaming.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+# Configure independent logging
+REPORTS_DIR = "./reports"
+os.makedirs(REPORTS_DIR, exist_ok=True)
+logger = logging.getLogger('giskard')
+logger.setLevel(logging.INFO)
+logger.propagate = False  # Prevent parent logger interference
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+file_handler = logging.FileHandler(os.path.join(REPORTS_DIR, 'giskard_red_teaming.log'))
+file_handler.setFormatter(formatter)
+stream_handler = logging.StreamHandler(sys.stdout)
+stream_handler.setFormatter(formatter)
+logger.handlers.clear()  # Clear any existing handlers
+logger.addHandler(file_handler)
+logger.addHandler(stream_handler)
 
 def validate_prompt_template(template: str, input_vars: list) -> bool:
     """Validate prompt template and input variables."""
@@ -76,6 +81,7 @@ def validate_model_metadata(name: str, description: str) -> bool:
 def display_giskard_section():
     st.title("Giskard: AI Model Evaluation & Testing")
     logger.info("Giskard section accessed")
+    scan_id = str(uuid.uuid4())  # Generate scan_id at the start
 
     # Introductory Information
     if st.button("Learn about Giskard"):
@@ -209,13 +215,30 @@ def display_giskard_section():
                                 )
 
                                 # Run scan
-                                scan_id = str(uuid.uuid4())
+                                start_time = datetime.now()
                                 results = giskard.scan(model, dataset)
                                 result_dict = results.to_dict()
                                 result_dict["scan_id"] = scan_id
                                 result_dict["timestamp"] = datetime.now().isoformat()
+                                result_dict["analysis_type"] = "Model Scanning"
+                                result_dict["model_type"] = model_type
+                                result_dict["execution_time"] = (datetime.now() - start_time).total_seconds()
 
-                                st.success("Scan completed!")
+                                # Save report to ./reports
+                                report_path = os.path.join(REPORTS_DIR, f"giskard_scan_{scan_id}.json")
+                                with open(report_path, 'w') as f:
+                                    json.dump(result_dict, f, indent=2)
+                                logger.info(f"Report saved to {report_path}")
+
+                                # Save log to ./reports
+                                log_path = os.path.join(REPORTS_DIR, f"giskard_log_{scan_id}.log")
+                                with open(os.path.join(REPORTS_DIR, 'giskard_red_teaming.log'), 'r') as log_file:
+                                    log_content = log_file.read()
+                                with open(log_path, 'w') as f:
+                                    f.write(log_content)
+                                logger.info(f"Log saved to {log_path}")
+
+                                st.success(f"Scan completed! Report saved to {report_path}")
                                 st.subheader("Scan Report")
                                 st.json(result_dict)
 
@@ -233,8 +256,9 @@ def display_giskard_section():
                                     for rec in result_dict["recommendations"]:
                                         st.write(f"- {rec}")
 
-                                # Download Report
-                                report_json = json.dumps(result_dict, indent=2)
+                                # Download Buttons
+                                with open(report_path, 'r') as f:
+                                    report_json = f.read()
                                 st.download_button(
                                     label="Download Scan Report",
                                     data=report_json,
@@ -242,9 +266,8 @@ def display_giskard_section():
                                     mime="application/json"
                                 )
 
-                                # Download Log
-                                with open('giskard_red_teaming.log', 'r') as log_file:
-                                    log_content = log_file.read()
+                                with open(log_path, 'r') as f:
+                                    log_content = f.read()
                                 st.download_button(
                                     label="Download Log File",
                                     data=log_content,
@@ -256,6 +279,19 @@ def display_giskard_section():
                             except Exception as e:
                                 st.error(f"Scan failed: {str(e)}")
                                 logger.error(f"LLM scan error: {str(e)}")
+                                # Save error report
+                                result_dict = {
+                                    "scan_id": scan_id,
+                                    "timestamp": datetime.now().isoformat(),
+                                    "analysis_type": "Model Scanning",
+                                    "model_type": model_type,
+                                    "error": str(e),
+                                    "execution_time": (datetime.now() - start_time).total_seconds() if 'start_time' in locals() else 0
+                                }
+                                report_path = os.path.join(REPORTS_DIR, f"giskard_scan_{scan_id}.json")
+                                with open(report_path, 'w') as f:
+                                    json.dump(result_dict, f, indent=2)
+                                logger.info(f"Error report saved to {report_path}")
             else:
                 st.write("Please provide the necessary LLM configuration.")
 
@@ -317,20 +353,37 @@ def display_giskard_section():
                     with st.spinner("Running RAGET evaluation..."):
                         try:
                             # Placeholder for RAGET evaluation
-                            # In practice, set up a retriever (e.g., vector store) and use RetrievalQA
                             st.warning("RAG evaluation requires a full RAG setup (LLM + retriever). This is a placeholder.")
-                            scan_id = str(uuid.uuid4())
+                            start_time = datetime.now()
                             result_dict = {
                                 "scan_id": scan_id,
                                 "timestamp": datetime.now().isoformat(),
+                                "analysis_type": "RAG Evaluation",
                                 "generator_score": 0.85,
                                 "retriever_score": 0.90,
                                 "overall_score": 0.875,
                                 "vulnerabilities": [],
-                                "recommendations": ["Improve retriever accuracy", "Enhance context relevance"]
+                                "recommendations": ["Improve retriever accuracy", "Enhance context relevance"],
+                                "execution_time": 0
                             }
 
-                            st.success("RAGET evaluation completed!")
+                            # Save report to ./reports
+                            report_path = os.path.join(REPORTS_DIR, f"giskard_raget_{scan_id}.json")
+                            with open(report_path, 'w') as f:
+                                json.dump(result_dict, f, indent=2)
+                            logger.info(f"Report saved to {report_path}")
+
+                            # Save log to ./reports
+                            log_path = os.path.join(REPORTS_DIR, f"giskard_log_{scan_id}.log")
+                            with open(os.path.join(REPORTS_DIR, 'giskard_red_teaming.log'), 'r') as log_file:
+                                log_content = log_file.read()
+                            with open(log_path, 'w') as f:
+                                f.write(log_content)
+                            logger.info(f"Log saved to {log_path}")
+
+                            result_dict["execution_time"] = (datetime.now() - start_time).total_seconds()
+
+                            st.success(f"RAGET evaluation completed! Report saved to {report_path}")
                             st.subheader("Evaluation Report")
                             st.json(result_dict)
 
@@ -351,8 +404,9 @@ def display_giskard_section():
                                 for rec in result_dict["recommendations"]:
                                     st.write(f"- {rec}")
 
-                            # Download Report
-                            report_json = json.dumps(result_dict, indent=2)
+                            # Download Buttons
+                            with open(report_path, 'r') as f:
+                                report_json = f.read()
                             st.download_button(
                                 label="Download Evaluation Report",
                                 data=report_json,
@@ -360,9 +414,8 @@ def display_giskard_section():
                                 mime="application/json"
                             )
 
-                            # Download Log
-                            with open('giskard_red_teaming.log', 'r') as log_file:
-                                log_content = log_file.read()
+                            with open(log_path, 'r') as f:
+                                log_content = f.read()
                             st.download_button(
                                 label="Download Log File",
                                 data=log_content,
@@ -374,10 +427,19 @@ def display_giskard_section():
                         except Exception as e:
                             st.error(f"RAGET evaluation failed: {str(e)}")
                             logger.error(f"RAGET evaluation error: {str(e)}")
+                            # Save error report
+                            result_dict = {
+                                "scan_id": scan_id,
+                                "timestamp": datetime.now().isoformat(),
+                                "analysis_type": "RAG Evaluation",
+                                "error": str(e),
+                                "execution_time": (datetime.now() - start_time).total_seconds() if 'start_time' in locals() else 0
+                            }
+                            report_path = os.path.join(REPORTS_DIR, f"giskard_raget_{scan_id}.json")
+                            with open(report_path, 'w') as f:
+                                json.dump(result_dict, f, indent=2)
+                            logger.info(f"Error report saved to {report_path}")
         else:
             st.write("Please provide the necessary LLM configuration for RAG.")
 
     st.warning("Ensure you have permission to scan or evaluate models. Handle results securely.")
-
-# Run the app
-# display_giskard_section()

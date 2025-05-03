@@ -1,5 +1,3 @@
-### Version 2
-
 import streamlit as st
 import logging
 import os
@@ -13,16 +11,20 @@ import tempfile
 import subprocess
 import sys
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('modelscan_red_teaming.log'),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-logger = logging.getLogger(__name__)
+# Configure independent logging
+REPORTS_DIR = "./reports"
+os.makedirs(REPORTS_DIR, exist_ok=True)
+logger = logging.getLogger('modelscan')
+logger.setLevel(logging.INFO)
+logger.propagate = False  # Prevent parent logger interference
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+file_handler = logging.FileHandler(os.path.join(REPORTS_DIR, 'modelscan_red_teaming.log'))
+file_handler.setFormatter(formatter)
+stream_handler = logging.StreamHandler(sys.stdout)
+stream_handler.setFormatter(formatter)
+logger.handlers.clear()  # Clear any existing handlers
+logger.addHandler(file_handler)
+logger.addHandler(stream_handler)
 
 # Supported model file extensions
 SUPPORTED_EXTENSIONS = ["pkl", "joblib", "h5", "pt", "pth", "tf", "onnx", "safetensors"]
@@ -52,13 +54,13 @@ def run_modelscan_scan(file_path: str, scan_config: Dict) -> Dict:
         if scan_type == "Deep Inspection":
             cmd.extend(["--deep"])
         elif scan_type == "Custom Scan" and scan_config.get("checks"):
-            # Map custom checks to modelscan options (adjust based on actual CLI options)
+            # Map custom checks to modelscan options (based on modelscan CLI)
             for check in scan_config.get("checks", []):
                 if check == "Pickle Vulnerability":
                     cmd.extend(["--check", "pickle"])
                 elif check == "Joblib Security":
                     cmd.extend(["--check", "joblib"])
-                # Add more mappings as needed
+                # Add more mappings as needed based on modelscan CLI options
         
         logger.info(f"Executing ModelScan command: {' '.join(cmd)}")
         result = subprocess.run(
@@ -69,12 +71,23 @@ def run_modelscan_scan(file_path: str, scan_config: Dict) -> Dict:
             timeout=scan_config.get("timeout", 300)
         )
         
-        # Parse output (assuming JSON or structured text; adjust based on actual output)
+        # Parse output (modelscan typically outputs JSON)
         try:
             scan_report = json.loads(result.stdout)
         except json.JSONDecodeError:
             # Fallback to parsing text output if not JSON
-            scan_report = {"raw_output": result.stdout, "errors": result.stderr}
+            scan_report = {
+                "raw_output": result.stdout,
+                "errors": result.stderr,
+                "vulnerabilities": [],
+                "structure": {},
+                "dependencies": [],
+                "compliance": {},
+                "custom_checks": {},
+                "integrity": {},
+                "malware": [],
+                "versioning": {}
+            }
         
         scan_report["success"] = True
         logger.info("ModelScan scan completed successfully")
@@ -93,6 +106,7 @@ def run_modelscan_scan(file_path: str, scan_config: Dict) -> Dict:
 def display_model_scan_section():
     st.title("ModelScan: Model Serialization Attack Detection")
     logger.info("ModelScan section accessed")
+    scan_id = str(uuid.uuid4())  # Generate scan_id at the start
 
     # Warn if ModelScan is not available
     if not MODELSCAN_AVAILABLE:
@@ -299,26 +313,38 @@ def display_model_scan_section():
         # Perform the scan
         start_time = datetime.now()
         scan_report = {}
-        scan_id = str(uuid.uuid4())
         
         try:
             # Run ModelScan scan
             scan_report = run_modelscan_scan(tmp_file_path, scan_config)
 
-            if not scan_report.get("success"):
-                st.error(f"Scan failed: {scan_report.get('error')}. Details: {scan_report.get('details')}")
-                logger.error(f"Scan failed: {scan_report.get('error')}")
-                return
-
-            # Enhance report with additional metadata
+            # Save report to ./reports
             scan_report["scan_id"] = scan_id
             scan_report["scan_type"] = scan_type
             scan_report["timestamp"] = datetime.now().isoformat()
             scan_report["config"] = scan_config
             scan_report["model_file"] = model_file.name
 
+            report_path = os.path.join(REPORTS_DIR, f"modelscan_{scan_id}.json")
+            with open(report_path, 'w') as f:
+                json.dump(scan_report, f, indent=2)
+            logger.info(f"Report saved to {report_path}")
+
+            # Save log to ./reports
+            log_path = os.path.join(REPORTS_DIR, f"modelscan_log_{scan_id}.log")
+            with open(os.path.join(REPORTS_DIR, 'modelscan_red_teaming.log'), 'r') as log_file:
+                log_content = log_file.read()
+            with open(log_path, 'w') as f:
+                f.write(log_content)
+            logger.info(f"Log saved to {log_path}")
+
+            if not scan_report.get("success"):
+                st.error(f"Scan failed: {scan_report.get('error')}. Details: {scan_report.get('details')}")
+                logger.error(f"Scan failed: {scan_report.get('error')}")
+                return
+
             # Display results
-            st.success("Scan completed successfully!")
+            st.success(f"Scan completed successfully! Report saved to {report_path}")
             st.subheader("ModelScan Report")
             st.json(scan_report)
 
@@ -418,13 +444,23 @@ def display_model_scan_section():
                     if scan_config.get("expected_version"):
                         st.write(f"Expected version: {scan_config['expected_version']}")
 
-            # Downloadable report
-            report_json = json.dumps(scan_report, indent=2)
+            # Download buttons
+            with open(report_path, 'r') as f:
+                report_json = f.read()
             st.download_button(
                 label="Download Scan Report",
                 data=report_json,
-                file_name=f"modelscan_report_{scan_id}.json",
+                file_name=f"modelscan_{scan_id}.json",
                 mime="application/json"
+            )
+
+            with open(log_path, 'r') as f:
+                log_content = f.read()
+            st.download_button(
+                label="Download Log File",
+                data=log_content,
+                file_name=f"modelscan_log_{scan_id}.log",
+                mime="text/plain"
             )
 
             # Execution time
@@ -440,6 +476,20 @@ def display_model_scan_section():
                 "If TensorFlow/CUDA errors persist, try a clean virtual environment."
             )
             logger.error(f"Scan error: {str(e)}")
+            # Save error report
+            scan_report = {
+                "scan_id": scan_id,
+                "scan_type": scan_type,
+                "timestamp": datetime.now().isoformat(),
+                "config": scan_config,
+                "model_file": model_file.name if model_file else "N/A",
+                "success": False,
+                "error": str(e)
+            }
+            report_path = os.path.join(REPORTS_DIR, f"modelscan_{scan_id}.json")
+            with open(report_path, 'w') as f:
+                json.dump(scan_report, f, indent=2)
+            logger.info(f"Error report saved to {report_path}")
 
         finally:
             # Clean up temporary file

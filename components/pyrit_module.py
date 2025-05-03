@@ -1,5 +1,3 @@
-### Version 2
-
 import streamlit as st
 import logging
 import os
@@ -13,16 +11,20 @@ import subprocess
 import tempfile
 import sys
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('pyrit_red_teaming.log'),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-logger = logging.getLogger(__name__)
+# Configure independent logging
+REPORTS_DIR = "./reports"
+os.makedirs(REPORTS_DIR, exist_ok=True)
+logger = logging.getLogger('pyrit')
+logger.setLevel(logging.INFO)
+logger.propagate = False  # Prevent parent logger interference
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+file_handler = logging.FileHandler(os.path.join(REPORTS_DIR, 'pyrit_red_teaming.log'))
+file_handler.setFormatter(formatter)
+stream_handler = logging.StreamHandler(sys.stdout)
+stream_handler.setFormatter(formatter)
+logger.handlers.clear()  # Clear any existing handlers
+logger.addHandler(file_handler)
+logger.addHandler(stream_handler)
 
 # Supported file extensions
 SUPPORTED_MODEL_EXTENSIONS = ["h5", "pkl", "pt", "pth", "onnx", "safetensors"]
@@ -291,11 +293,26 @@ def run_pyrit_analysis(analysis_type: str, config: Dict, file_path: Optional[str
                 result["vulnerabilities"] = [{"type": f"Non-compliance with {s}", "severity": "Medium"} for s in config.get("standards", [])]
                 result["recommendations"] = ["Update documentation", "Implement compliance checks"]
 
+        # Save report to ./reports
+        report_type = "llm" if analysis_type in ["Prompt Injection Test", "Model Poisoning Test", "Jailbreaking Test", "Data Extraction Test"] else "ml"
+        report_path = os.path.join(REPORTS_DIR, f"pyrit_{report_type}_{scan_id}.json")
+        with open(report_path, 'w') as f:
+            json.dump(result, f, indent=2)
+        logger.info(f"Report saved to {report_path}")
+
+        # Save log to ./reports
+        log_path = os.path.join(REPORTS_DIR, f"pyrit_log_{scan_id}.log")
+        with open(os.path.join(REPORTS_DIR, 'pyrit_red_teaming.log'), 'r') as log_file:
+            log_content = log_file.read()
+        with open(log_path, 'w') as f:
+            f.write(log_content)
+        logger.info(f"Log saved to {log_path}")
+
         logger.info(f"PyRIT {analysis_type} completed successfully")
         return result
     except Exception as e:
         logger.error(f"PyRIT {analysis_type} failed: {str(e)}")
-        return {
+        error_result = {
             "scan_id": str(uuid.uuid4()),
             "analysis_type": analysis_type,
             "timestamp": datetime.now().isoformat(),
@@ -305,6 +322,13 @@ def run_pyrit_analysis(analysis_type: str, config: Dict, file_path: Optional[str
             "status": "failed",
             "error": str(e)
         }
+        # Save error report to ./reports
+        report_type = "llm" if analysis_type in ["Prompt Injection Test", "Model Poisoning Test", "Jailbreaking Test", "Data Extraction Test"] else "ml"
+        report_path = os.path.join(REPORTS_DIR, f"pyrit_{report_type}_{error_result['scan_id']}.json")
+        with open(report_path, 'w') as f:
+            json.dump(error_result, f, indent=2)
+        logger.info(f"Error report saved to {report_path}")
+        return error_result
 
 def display_ml_analysis_section():
     st.title("Traditional ML Model Analysis")
@@ -374,7 +398,8 @@ def display_ml_analysis_section():
     upload_type = st.radio(
         "Upload Type",
         ["Model", "Data"],
-        help="Upload a model file for model-based scans or a dataset for data-based scans"
+        help="Upload a model file for model-based scans or a dataset for data-based scans",
+        key="upload_file"
     )
     file_path = None
     uploaded_file = None
@@ -436,7 +461,7 @@ def display_ml_analysis_section():
                 logger.error(f"Analysis failed: {analysis_result.get('error')}")
                 return
 
-            st.success("Analysis completed successfully!")
+            st.success(f"Analysis completed successfully! Report saved to {REPORTS_DIR}/pyrit_ml_{analysis_result['scan_id']}.json")
             st.subheader("Analysis Report")
             st.json(analysis_result)
 
@@ -454,21 +479,24 @@ def display_ml_analysis_section():
                 for rec in analysis_result["recommendations"]:
                     st.write(f"- {rec}")
 
-            report_json = json.dumps(analysis_result, indent=2)
+            # Download buttons
+            report_path = os.path.join(REPORTS_DIR, f"pyrit_ml_{analysis_result['scan_id']}.json")
+            with open(report_path, 'r') as f:
+                report_json = f.read()
             st.download_button(
                 label="Download Analysis Report",
                 data=report_json,
-                file_name=f"pyrit_report_{analysis_result['scan_id']}.json",
+                file_name=f"pyrit_ml_{analysis_result['scan_id']}.json",
                 mime="application/json"
             )
 
-            # Download log file
-            with open('pyrit_red_teaming.log', 'r') as log_file:
-                log_content = log_file.read()
+            log_path = os.path.join(REPORTS_DIR, f"pyrit_log_{analysis_result['scan_id']}.log")
+            with open(log_path, 'r') as f:
+                log_content = f.read()
             st.download_button(
                 label="Download Log File",
                 data=log_content,
-                file_name=f"pyrit_log_{scan_id}.log",
+                file_name=f"pyrit_log_{analysis_result['scan_id']}.log",
                 mime="text/plain"
             )
 
@@ -613,7 +641,7 @@ def display_llm_attack_section():
                 logger.error(f"Attack failed: {analysis_result.get('error')}")
                 return
 
-            st.success("Attack completed successfully!")
+            st.success(f"Attack completed successfully! Report saved to {REPORTS_DIR}/pyrit_llm_{analysis_result['scan_id']}.json")
             st.subheader("Attack Report")
             st.json(analysis_result)
 
@@ -632,16 +660,20 @@ def display_llm_attack_section():
                 for rec in analysis_result["recommendations"]:
                     st.write(f"- {rec}")
 
-            report_json = json.dumps(analysis_result, indent=2)
+            # Download buttons
+            report_path = os.path.join(REPORTS_DIR, f"pyrit_llm_{analysis_result['scan_id']}.json")
+            with open(report_path, 'r') as f:
+                report_json = f.read()
             st.download_button(
                 label="Download Attack Report",
                 data=report_json,
-                file_name=f"pyrit_report_{analysis_result['scan_id']}.json",
+                file_name=f"pyrit_llm_{analysis_result['scan_id']}.json",
                 mime="application/json"
             )
 
-            with open('pyrit_red_teaming.log', 'r') as log_file:
-                log_content = log_file.read()
+            log_path = os.path.join(REPORTS_DIR, f"pyrit_log_{analysis_result['scan_id']}.log")
+            with open(log_path, 'r') as f:
+                log_content = f.read()
             st.download_button(
                 label="Download Log File",
                 data=log_content,
@@ -662,7 +694,8 @@ def display_red_teaming_sections():
     analysis_section = st.radio(
         "Select Analysis Section",
         ["Traditional ML Model Analysis", "LLM Attack Simulation"],
-        help="Choose Traditional ML for model/data scans or LLM for API-based attacks"
+        help="Choose Traditional ML for model/data scans or LLM for API-based attacks",
+        key="selection_analysis"
     )
     if analysis_section == "Traditional ML Model Analysis":
         display_ml_analysis_section()
@@ -670,5 +703,3 @@ def display_red_teaming_sections():
         display_llm_attack_section()
 
     st.warning("Ensure you have permission to analyze models or data. Handle results securely. This is a simulated interface; integrate PyRIT for full functionality.")
-
-# Run the app

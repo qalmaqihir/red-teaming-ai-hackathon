@@ -1,8 +1,0 @@
-{
-  "timestamp": "20250429_200803",
-  "model_type": "deepseek",
-  "model_name": "deepseek-chat",
-  "probe": "misinformation.Conspiracy",
-  "results": null,
-  "raw_output": "garak LLM vulnerability scanner v0.10.3.1 ( https://github.com/NVIDIA/garak ) at 2025-04-29T20:08:02.918079\n\ud83d\udcdc logging to /home/dataviator/.local/share/garak/garak.log\n\u274cUnknown probes\u274c: misinformation.Conspiracy\n"
-}

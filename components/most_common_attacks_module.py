@@ -1,5 +1,3 @@
-### Version 2
-
 import streamlit as st
 import pandas as pd
 import logging
@@ -13,17 +11,22 @@ import json
 import subprocess
 import sys
 from datetime import datetime
+import os
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('llm_red_teaming.log'),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-logger = logging.getLogger(__name__)
+# Configure independent logging
+REPORTS_DIR = "./reports"
+os.makedirs(REPORTS_DIR, exist_ok=True)
+logger = logging.getLogger('art')
+logger.setLevel(logging.INFO)
+logger.propagate = False  # Prevent parent logger interference
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+file_handler = logging.FileHandler(os.path.join(REPORTS_DIR, 'art_red_teaming.log'))
+file_handler.setFormatter(formatter)
+stream_handler = logging.StreamHandler(sys.stdout)
+stream_handler.setFormatter(formatter)
+logger.handlers.clear()  # Clear any existing handlers
+logger.addHandler(file_handler)
+logger.addHandler(stream_handler)
 
 # Define model configurations for well-known providers
 MODEL_CONFIGS = {
@@ -330,9 +333,10 @@ def run_llm_test(model_name: str, api_key: str, prompt: str, base_url: Optional[
         return f"Error: {str(e)}"
 
 # Main Streamlit app function
-def display_most_common_llm_attacks_page():
+def display_most_common_llm_attacks_section():
     st.title("Advanced LLM Red Teaming Dashboard")
     st.markdown("Test large language models for vulnerabilities like prompt injection, bias, toxicity, and more.")
+    scan_id = str(uuid.uuid4())  # Generate scan_id at the start
 
     # ART Information
     if st.button("Learn about ART"):
@@ -353,6 +357,7 @@ def display_most_common_llm_attacks_page():
 
             ##### Visit their [GitHub Page](https://github.com/Trusted-AI/adversarial-robustness-toolbox)
             """)
+            logger.info("ART information expanded")
 
     # Model selection
     st.subheader("Model Configuration")
@@ -361,6 +366,7 @@ def display_most_common_llm_attacks_page():
         options=list(MODEL_CONFIGS.keys()),
         help="Choose the model to test. Select 'Ollama' for local models or 'Custom Model' for a custom endpoint."
     )
+    logger.info(f"Model selected: {model_name}")
 
     # Ollama model selection
     ollama_model = None
@@ -368,6 +374,7 @@ def display_most_common_llm_attacks_page():
         available_ollama_models = check_ollama_models()
         if not available_ollama_models:
             st.warning("No Ollama models found. Please ensure Ollama is installed and models are pulled.")
+            logger.warning("No Ollama models detected")
         else:
             ollama_model = st.selectbox(
                 "Select Ollama Model",
@@ -420,11 +427,14 @@ def display_most_common_llm_attacks_page():
     if st.button("Run Tests"):
         if not model_name or (not api_key and model_name != "Ollama") or (model_name == "Custom Model" and not base_url):
             st.error("Please provide all required inputs: model, API key (if applicable), and base URL (for custom model).")
-        else:
-            results = {}
-            start_time = datetime.now()
-            logger.info(f"Starting test suite for model: {model_name}")
+            logger.error("Missing required inputs")
+            return
 
+        results = {}
+        start_time = datetime.now()
+        logger.info(f"Starting test suite for model: {model_name}")
+
+        try:
             for test in tests_to_run:
                 st.write(f"### {test} Test Result:")
                 test_id = str(uuid.uuid4())
@@ -490,13 +500,56 @@ def display_most_common_llm_attacks_page():
                     st.write(f"**Evaluation**: {evaluation}")
                     results[test] = {"Test ID": test_id, "Result": result, "Evaluation": evaluation}
 
+            # Save results to JSON report
+            report = {
+                "scan_id": scan_id,
+                "model_name": model_name,
+                "timestamp": datetime.now().isoformat(),
+                "tests_run": tests_to_run,
+                "results": results,
+                "status": "success",
+                "execution_time": (datetime.now() - start_time).total_seconds()
+            }
+            report_path = os.path.join(REPORTS_DIR, f"art_{scan_id}.json")
+            with open(report_path, 'w') as f:
+                json.dump(report, f, indent=2)
+            logger.info(f"Report saved to {report_path}")
+
+            # Save log to ./reports
+            log_path = os.path.join(REPORTS_DIR, f"art_log_{scan_id}.log")
+            with open(os.path.join(REPORTS_DIR, 'art_red_teaming.log'), 'r') as log_file:
+                log_content = log_content = log_file.read()
+            with open(log_path, 'w') as f:
+                f.write(log_content)
+            logger.info(f"Log saved to {log_path}")
+
             # Display summary
+            st.success(f"Tests completed successfully! Report saved to {report_path}")
             st.subheader("Test Results Summary")
             st.json(results)
             execution_time = (datetime.now() - start_time).total_seconds()
             st.write(f"**Execution Time**: {execution_time:.2f} seconds")
 
-            # Save results to CSV
+            # Download buttons
+            with open(report_path, 'r') as f:
+                report_json = f.read()
+            st.download_button(
+                label="Download Test Report (JSON)",
+                data=report_json,
+                file_name=f"art_{scan_id}.json",
+                mime="application/json"
+            )
+
+            with open(log_path, 'r') as f:
+                log_content = f.read()
+            st.download_button(
+                label="Download Log File",
+                data=log_content,
+                file_name=f"art_log_{scan_id}.log",
+                mime="text/plain"
+            )
+
+            # Save results to CSV (retained for backward compatibility)
             if results:
                 df = pd.json_normalize([
                     {"Test": test, **data} for test, data in results.items()
@@ -505,11 +558,27 @@ def display_most_common_llm_attacks_page():
                 st.download_button(
                     label="Download Results as CSV",
                     data=csv,
-                    file_name=f"llm_test_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    file_name=f"art_results_{scan_id}.csv",
                     mime="text/csv"
                 )
 
             logger.info(f"Test suite completed in {execution_time:.2f} seconds")
 
-# if __name__ == "__main__":
-#     display_most_common_llm_attacks_page()
+        except Exception as e:
+            st.error(f"Test suite failed: {str(e)}")
+            logger.error(f"Test suite failed: {str(e)}")
+            report = {
+                "scan_id": scan_id,
+                "model_name": model_name,
+                "timestamp": datetime.now().isoformat(),
+                "tests_run": tests_to_run,
+                "results": results,
+                "status": "failed",
+                "error": str(e),
+                "execution_time": (datetime.now() - start_time).total_seconds()
+            }
+            report_path = os.path.join(REPORTS_DIR, f"art_{scan_id}.json")
+            with open(report_path, 'w') as f:
+                json.dump(report, f, indent=2)
+            logger.info(f"Error report saved to {report_path}")
+            return

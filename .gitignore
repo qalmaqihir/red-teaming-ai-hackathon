@@ -1,3 +1,13 @@
+## My 
+reports/
+results/
+
+
+
+
+
+
+## Some standard gitignore options - from template
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

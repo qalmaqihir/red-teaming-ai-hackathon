@@ -1,37 +1,49 @@
-
-
 import streamlit as st
-from components import home, art_module, counterfit_module, pyrit_module, results, model_scan_module,most_common_attacks_module, garak, giskard_module
-
+from components.home import display_home
+from components.giskard_module import display_giskard_section
+from components.pyrit_module import display_red_teaming_sections
+from components.art_module import display_art_section
+from components.modelscan_module import display_model_scan_section
+from components.garak_module import display_garak
+from components.counterfit_module import display_counterfit_section
+from components.results_module import display_results_section
+from components.most_common_attacks_module import display_most_common_llm_attacks_section
 # Configure the main page
 st.set_page_config(page_title="AI Red Teaming Platform", layout="wide")
 
 # Sidebar for navigation
 st.sidebar.title("AI Red Teaming Navigation")
 page = st.sidebar.radio(
-    "Go to", ["Home", "LLM vulnerability scanner - garak","Most Common LLM Attacks", "Adversarial Robustness Toolbox", "Counterfit", "PyRIT", "Giskard","Model Scan", "Results & Reports"]
+    "Go to",
+    [
+        "Home",
+        "Garak Scanner",
+        "Most Common LLM Attacks",
+        "Adversarial Robustness Toolbox",
+        "Counterfit",
+        "PyRIT",
+        "Giskard",
+        "ModelScan",
+        "Results & Reports"
+    ]
 )
-
 
 # Main section switching
 if page == "Home":
-    home.display_home()
-elif page == "Most Common LLM Attacks":
-    most_common_attacks_module.display_most_common_llm_attacks_page()
-elif page == "LLM vulnerability scanner - garak":
-    garak.display_garak()
+    display_home()
+elif page == "Garak Scanner":
+    display_garak()
 elif page == "Adversarial Robustness Toolbox":
-    art_module.display_art_section()
+    display_art_section()
 elif page == "Counterfit":
-    # counterfit_module.display_counterfit_section()
-    counterfit_module.display_counterfit_section()
+    display_counterfit_section()
+elif page == "Most Common LLM Attacks":
+    display_most_common_llm_attacks_section()
 elif page == "PyRIT":
-    # pyrit_module.display_pyrit_section()
-    pyrit_module.display_red_teaming_sections()
-elif page == "Model Scan":
-    model_scan_module.display_model_scan_section()
+    display_red_teaming_sections()
 elif page == "Giskard":
-    giskard_module.display_giskard_section()
-
+    display_giskard_section()
+elif page == "ModelScan":
+    display_model_scan_section()
 elif page == "Results & Reports":
-    results.display_results_section()
+    display_results_section()

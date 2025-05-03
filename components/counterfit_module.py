@@ -1,5 +1,3 @@
-### Version 2
-
 import streamlit as st
 import logging
 import os
@@ -13,17 +11,22 @@ import tempfile
 from PIL import Image
 import io
 import csv
+import sys
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('counterfit.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+# Configure independent logging
+REPORTS_DIR = "./reports"
+os.makedirs(REPORTS_DIR, exist_ok=True)
+logger = logging.getLogger('counterfit')
+logger.setLevel(logging.INFO)
+logger.propagate = False  # Prevent parent logger interference
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+file_handler = logging.FileHandler(os.path.join(REPORTS_DIR, 'counterfit_red_teaming.log'))
+file_handler.setFormatter(formatter)
+stream_handler = logging.StreamHandler(sys.stdout)
+stream_handler.setFormatter(formatter)
+logger.handlers.clear()  # Clear any existing handlers
+logger.addHandler(file_handler)
+logger.addHandler(stream_handler)
 
 # Supported formats and constraints
 SUPPORTED_IMAGE_FORMATS = ["jpg", "jpeg", "png"]
@@ -130,7 +133,8 @@ def run_counterfit_attack(attack_type: str, model_type: str, model_input: Dict, 
             "success_rate": 0.0,
             "vulnerabilities": [],
             "recommendations": [],
-            "perturbed_output": None
+            "perturbed_output": None,
+            "execution_time": 0.0
         }
 
         # Placeholder for model loading (if file-based)
@@ -191,12 +195,14 @@ def run_counterfit_attack(attack_type: str, model_type: str, model_input: Dict, 
             "timestamp": datetime.now().isoformat(),
             "config": attack_config,
             "success_rate": 0.0,
-            "error": str(e)
+            "error": str(e),
+            "execution_time": 0.0
         }
 
 def display_counterfit_section():
     st.title("Counterfit: AI Security Testing")
     logger.info("Counterfit section accessed")
+    scan_id = str(uuid.uuid4())  # Generate scan_id at the start
 
     if st.button("Learn about Counterfit"):
         with st.expander("Counterfit Explained", expanded=True):
@@ -372,13 +378,50 @@ def display_counterfit_section():
                 attack_config=attack_config,
                 sample_input=sample_input
             )
+            attack_result["execution_time"] = (datetime.now() - start_time).total_seconds()
+
+            # Save report to ./reports
+            report_path = os.path.join(REPORTS_DIR, f"counterfit_{attack_result['scan_id']}.json")
+            with open(report_path, 'w') as f:
+                json.dump(attack_result, f, indent=2)
+            logger.info(f"Report saved to {report_path}")
+
+            # Save log to ./reports
+            log_path = os.path.join(REPORTS_DIR, f"counterfit_log_{attack_result['scan_id']}.log")
+            with open(os.path.join(REPORTS_DIR, 'counterfit_red_teaming.log'), 'r') as log_file:
+                log_content = log_file.read()
+            with open(log_path, 'w') as f:
+                f.write(log_content)
+            logger.info(f"Log saved to {log_path}")
 
             if "error" in attack_result:
                 st.error(f"Attack failed: {attack_result['error']}")
                 logger.error(f"Attack failed: {attack_result['error']}")
+
+                # Download error report
+                with open(report_path, 'r') as f:
+                    report_json = f.read()
+                st.download_button(
+                    label="Download Error Report",
+                    data=report_json,
+                    file_name=f"counterfit_{attack_result['scan_id']}.json",
+                    mime="application/json"
+                )
+
+                # Download log
+                with open(log_path, 'r') as f:
+                    log_content = f.read()
+                st.download_button(
+                    label="Download Log File",
+                    data=log_content,
+                    file_name=f"counterfit_log_{attack_result['scan_id']}.log",
+                    mime="text/plain"
+                )
+
+                st.write(f"**Execution Time**: {attack_result['execution_time']:.2f} seconds")
                 return
 
-            st.success("Attack completed successfully!")
+            st.success(f"Attack completed successfully! Report saved to {report_path}")
             st.subheader("Attack Report")
             st.json(attack_result)
 
@@ -402,16 +445,19 @@ def display_counterfit_section():
                 st.image(sample_input, caption="Original Image", width=200)
                 st.image(sample_input, caption="Perturbed Image (Placeholder)", width=200)
 
-            report_json = json.dumps(attack_result, indent=2)
+            # Download report
+            with open(report_path, 'r') as f:
+                report_json = f.read()
             st.download_button(
                 label="Download Attack Report",
                 data=report_json,
-                file_name=f"counterfit_report_{attack_result['scan_id']}.json",
+                file_name=f"counterfit_{attack_result['scan_id']}.json",
                 mime="application/json"
             )
 
-            with open('counterfit.log', 'r') as log_file:
-                log_content = log_file.read()
+            # Download log
+            with open(log_path, 'r') as f:
+                log_content = f.read()
             st.download_button(
                 label="Download Log File",
                 data=log_content,
@@ -419,13 +465,59 @@ def display_counterfit_section():
                 mime="text/plain"
             )
 
-            execution_time = (datetime.now() - start_time).total_seconds()
-            st.write(f"**Execution Time**: {execution_time:.2f} seconds")
-            logger.info(f"Attack completed in {execution_time:.2f} seconds")
+            st.write(f"**Execution Time**: {attack_result['execution_time']:.2f} seconds")
+            logger.info(f"Attack completed in {attack_result['execution_time']:.2f} seconds")
 
         except Exception as e:
             st.error(f"Unexpected error: {str(e)}")
             logger.error(f"Unexpected attack error: {str(e)}")
+            # Save error report
+            error_report = {
+                "scan_id": scan_id,
+                "attack_type": attack_type,
+                "model_type": model_type,
+                "model_url": model_input.get("url", "N/A"),
+                "model_file": model_input.get("file", "N/A"),
+                "timestamp": datetime.now().isoformat(),
+                "config": attack_config,
+                "success_rate": 0.0,
+                "error": str(e),
+                "execution_time": (datetime.now() - start_time).total_seconds()
+            }
+            report_path = os.path.join(REPORTS_DIR, f"counterfit_{scan_id}.json")
+            with open(report_path, 'w') as f:
+                json.dump(error_report, f, indent=2)
+            logger.info(f"Error report saved to {report_path}")
+
+            # Save error log
+            log_path = os.path.join(REPORTS_DIR, f"counterfit_log_{scan_id}.log")
+            with open(os.path.join(REPORTS_DIR, 'counterfit_red_teaming.log'), 'r') as log_file:
+                log_content = log_file.read()
+            with open(log_path, 'w') as f:
+                f.write(log_content)
+            logger.info(f"Error log saved to {log_path}")
+
+            # Download error report
+            with open(report_path, 'r') as f:
+                report_json = f.read()
+            st.download_button(
+                label="Download Error Report",
+                data=report_json,
+                file_name=f"counterfit_{scan_id}.json",
+                mime="application/json"
+            )
+
+            # Download error log
+            with open(log_path, 'r') as f:
+                log_content = f.read()
+            st.download_button(
+                label="Download Log File",
+                data=log_content,
+                file_name=f"counterfit_log_{scan_id}.log",
+                mime="text/plain"
+            )
+
+            st.write(f"**Execution Time**: {error_report['execution_time']:.2f} seconds")
         finally:
             if model_input.get("file") and os.path.exists(model_input["file"]):
                 try:
@@ -435,6 +527,3 @@ def display_counterfit_section():
                     logger.error(f"Failed to delete temporary file: {str(e)}")
 
     st.warning("Ensure you have permission to attack the model. This is a simulated interface; integrate Counterfit for full functionality.")
-
-# Run the app
-# display_counterfit_section()

@@ -1,4 +1,21 @@
-version: '3.8'
+# version: '3.8'
+
+# services:
+#   streamlit:
+#     build:
+#       context: .
+#       dockerfile: Dockerfile
+#     ports:
+#       - "8501:8501"
+#     environment:
+#       - OPENAI_API_KEY=${OPENAI_API_KEY}
+#       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+#     env_file:
+#       - .env
+#     volumes:
+#       - .:/app
+#       - ./reports:/app/reports
+#     restart: unless-stopped
 
 services:
   streamlit:
@@ -8,11 +25,9 @@ services:
     ports:
       - "8501:8501"
     environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - PYTHONUNBUFFERED=1
     env_file:
       - .env
     volumes:
-      - .:/app
       - ./reports:/app/reports
     restart: unless-stopped

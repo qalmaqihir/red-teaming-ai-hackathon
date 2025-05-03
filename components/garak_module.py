@@ -1,5 +1,3 @@
-#### Version 2
-
 import streamlit as st
 import subprocess
 import os
@@ -11,19 +9,24 @@ import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
-from pathlib import Path
-import urllib.parse
+import uuid
+import sys
+import glob
 
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("garak_scanner.log"),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger("garak_scanner")
+# Configure independent logging
+REPORTS_DIR = "./reports"
+os.makedirs(REPORTS_DIR, exist_ok=True)
+logger = logging.getLogger('garak')
+logger.setLevel(logging.INFO)
+logger.propagate = False  # Prevent parent logger interference
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+file_handler = logging.FileHandler(os.path.join(REPORTS_DIR, 'garak_red_teaming.log'))
+file_handler.setFormatter(formatter)
+stream_handler = logging.StreamHandler(sys.stdout)
+stream_handler.setFormatter(formatter)
+logger.handlers.clear()  # Clear any existing handlers
+logger.addHandler(file_handler)
+logger.addHandler(stream_handler)
 
 # Define model configurations
 MODEL_CONFIGS = {
@@ -138,27 +141,28 @@ def run_garak_command(command, timeout=300):
         )
         elapsed_time = time.time() - start_time
         logger.info(f"Command completed in {elapsed_time:.2f} seconds")
-        return True, result.stdout
+        logger.debug(f"Command output: {result.stdout}")
+        logger.debug(f"Command stderr: {result.stderr}")
+        return True, result.stdout, result.stderr
     except subprocess.CalledProcessError as e:
         logger.error(f"Command failed with return code {e.returncode}")
         logger.error(f"stderr: {e.stderr}")
-        return False, f"Error: {e.stderr}"
+        return False, e.stderr, e.stderr
     except subprocess.TimeoutExpired:
         logger.error(f"Command timed out after {timeout} seconds")
-        return False, f"Error: Command timed out after {timeout} seconds"
+        return False, f"Error: Command timed out after {timeout} seconds", ""
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
-        return False, f"Unexpected error: {str(e)}"
+        return False, f"Unexpected error: {str(e)}", ""
 
 # Function to test if garak is installed and working
 def test_garak():
     logger.info("Testing garak installation")
     command = ["python", "-m", "garak", "--model_type", "test.Blank", "--probes", "test.Test"]
-    success, output = run_garak_command(command, timeout=30)
+    success, output, stderr = run_garak_command(command, timeout=30)
     
     if success:
         logger.info("Garak test completed successfully")
-        # Don't check for specific patterns, just consider it successful if the command ran
         return True, output
     else:
         logger.error("Garak test failed")
@@ -169,8 +173,8 @@ def parse_garak_output(output):
     logger.info("Parsing garak output")
     results = []
     
-    # Extract all summary lines
-    summary_matches = re.finditer(r'(.*?): (PASS|FAIL|ERROR)\s+ok on\s+(\d+)/\s*(\d+)', output)
+    # Updated regex to match garak 0.9.2.3 output format
+    summary_matches = re.finditer(r'probe: (.*?)\s+\|\s+(PASS|FAIL|ERROR)\s+\|\s+(\d+)/(\d+)', output, re.MULTILINE)
     
     for match in summary_matches:
         probe = match.group(1).strip()
@@ -189,32 +193,45 @@ def parse_garak_output(output):
     
     if not results:
         logger.warning("No results could be parsed from output")
-        return None
+        return []
     
+    logger.info(f"Parsed {len(results)} results")
     return results
 
 # Function to extract HTML report path
 def extract_html_report_path(output):
     logger.info("Extracting HTML report path")
-    report_match = re.search(r'📜 report html summary being written to (.+)', output)
-    if report_match:
-        path = report_match.group(1).strip()
-        logger.info(f"Found HTML report path: {path}")
-        return path
-    logger.warning("No HTML report path found in output")
+    # Try multiple patterns to match garak 0.9.2.3 output
+    patterns = [
+        r'report html summary written to (.+?\.html)',
+        r'📜 report html summary being written to (.+?\.html)',
+        r'html report written to (.+?\.html)'
+    ]
+    for pattern in patterns:
+        report_match = re.search(pattern, output)
+        if report_match:
+            path = report_match.group(1).strip()
+            logger.info(f"Found HTML report path: {path}")
+            return path
+    
+    # Fallback: search for HTML files in /tmp/garak.*
+    logger.info("Falling back to searching /tmp/garak.* for HTML reports")
+    temp_dirs = glob.glob("/tmp/garak.*")
+    for temp_dir in temp_dirs:
+        html_files = glob.glob(os.path.join(temp_dir, "*.html"))
+        if html_files:
+            path = html_files[0]  # Take the first HTML file found
+            logger.info(f"Found HTML report in temp dir: {path}")
+            return path
+    
+    logger.warning("No HTML report path found in output or /tmp")
     return None
 
-# Function to copy HTML report to a more accessible location
-def copy_html_report(source_path, dest_dir="reports"):
+# Function to copy HTML report to ./reports
+def copy_html_report(source_path, scan_id):
     logger.info(f"Copying HTML report from {source_path}")
     
-    # Create reports directory if it doesn't exist
-    Path(dest_dir).mkdir(exist_ok=True)
-    
-    # Generate a timestamped filename
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"garak_report_{timestamp}.html"
-    dest_path = os.path.join(dest_dir, filename)
+    dest_path = os.path.join(REPORTS_DIR, f"garak_html_{scan_id}.html")
     
     try:
         shutil.copy(source_path, dest_path)
@@ -224,26 +241,23 @@ def copy_html_report(source_path, dest_dir="reports"):
         logger.error(f"Failed to copy report: {str(e)}")
         return False, str(e)
 
-# Function to save scan results
-def save_scan_results(results, model_type, model_name, probe, output):
+# Function to save scan results to ./reports
+def save_scan_results(results, model_type, model_name, probe, output, stderr, scan_id):
     logger.info("Saving scan results")
     
-    # Create results directory if it doesn't exist
-    Path("results").mkdir(exist_ok=True)
-    
-    # Generate a timestamped filename
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"scan_{model_type}_{timestamp}.json"
-    path = os.path.join("results", filename)
+    filename = f"garak_{scan_id}.json"
+    path = os.path.join(REPORTS_DIR, filename)
     
     # Prepare data to save
     data = {
-        "timestamp": timestamp,
+        "scan_id": scan_id,
+        "timestamp": datetime.now().isoformat(),
         "model_type": model_type,
         "model_name": model_name,
         "probe": probe,
         "results": results,
-        "raw_output": output
+        "raw_output": output,
+        "raw_stderr": stderr
     }
     
     try:
@@ -283,8 +297,9 @@ def display_garak():
     
     st.title("🔍 Advanced LLM Vulnerability Scanner")
     st.write("Test and evaluate LLMs for vulnerabilities using garak")
+    scan_id = str(uuid.uuid4())  # Generate scan_id at the start
     
-    # Sidebar for settings and info
+    # Sidebar for settings and history
     with st.sidebar:
         st.header("About")
         st.markdown("""
@@ -301,39 +316,35 @@ def display_garak():
         timeout = st.slider("Timeout (seconds)", 60, 1200, 300, 60)
         advanced_mode = st.checkbox("Advanced Mode", value=False)
         
-        # st.header("History")
-        # reports_dir = Path("reports")
-        # if reports_dir.exists():
-        #     reports = list(reports_dir.glob("*.html"))
-        #     if reports:
-        #         for report in sorted(reports, reverse=True)[:5]:
-        #             st.markdown(f"[{report.name}](./{report})")
-        #     else:
-        #         st.write("No previous reports found")
-        # else:
-        #     st.write("No reports directory")
-   
-
         st.header("History")
-        reports_dir = Path("reports")
-
+        reports_dir = Path(REPORTS_DIR)
         if reports_dir.exists():
-            reports = list(reports_dir.glob("*.html"))
+            reports = list(reports_dir.glob("garak_*.json")) + list(reports_dir.glob("garak_html_*.html"))
             if reports:
-                for report in sorted(reports, reverse=True)[:5]:
-                    file_path = report.resolve()
-                    file_url = f"file://{urllib.parse.quote(str(file_path))}"
-                    st.markdown(f"[{report.name}]({file_url})")
-                    # st.markdown(
-                    #     f'<a href="{file_url}" target="_blank">{report.name}</a>',
-                    #     unsafe_allow_html=True,
-                    # )
+                st.write("Recent Reports:")
+                for report in sorted(reports, key=lambda x: x.stat().st_mtime, reverse=True)[:5]:
+                    if report.suffix == ".json":
+                        with open(report, 'r') as f:
+                            report_data = json.load(f)
+                        timestamp = report_data.get("timestamp", "Unknown")
+                        model_name = report_data.get("model_name", "Unknown")
+                        label = f"{report.name} ({model_name}, {timestamp})"
+                        mime = "application/json"
+                    else:  # .html
+                        timestamp = datetime.fromtimestamp(report.stat().st_mtime).isoformat()
+                        label = f"{report.name} (HTML, {timestamp})"
+                        mime = "text/html"
+                    st.download_button(
+                        label=label,
+                        data=open(report, 'rb').read(),
+                        file_name=report.name,
+                        mime=mime,
+                        key=f"history_{report.name}"
+                    )
             else:
                 st.write("No previous reports found")
         else:
             st.write("No reports directory")
-
-
 
     # Main content area
     col1, col2 = st.columns([2, 1])
@@ -371,12 +382,10 @@ def display_garak():
         if model_type == "ollama":
             with st.spinner("Checking for installed Ollama models..."):
                 available_models = get_ollama_models()
-                # Update the model config with the found models
                 model_config["models"] = available_models
         
         # Model name selection
         if model_config.get("custom_model", False):
-            # Allow custom model input
             if model_config["models"]:
                 model_option = st.radio(
                     "Model Selection",
@@ -389,7 +398,6 @@ def display_garak():
             else:
                 model_name = st.text_input("Enter Model Name/Path", "")
         else:
-            # Only allow selection from predefined list
             model_name = st.selectbox("Select Model", model_config["models"])
         
         # API key input if required
@@ -399,7 +407,6 @@ def display_garak():
                 type="password",
                 help=f"Required to access {model_type} models"
             )
-            # Show env var info
             if model_config.get("env_var"):
                 st.info(f"You can also set the {model_config['env_var']} environment variable instead of entering it here.")
         else:
@@ -428,7 +435,6 @@ def display_garak():
     
     with col2:
         st.subheader("2. Select Probe")
-        # Probe selection with description
         probe_options = list(AVAILABLE_PROBES.keys())
         probe = st.selectbox(
             "Select Probe Type", 
@@ -436,10 +442,8 @@ def display_garak():
             format_func=lambda x: f"{x.split('.')[-1] if '.' in x else x}"
         )
         
-        # Show probe description
         st.info(AVAILABLE_PROBES.get(probe, "No description available"))
         
-        # Advanced probe options
         if advanced_mode:
             with st.expander("Advanced Probe Options", expanded=False):
                 num_generations = st.number_input(
@@ -449,28 +453,16 @@ def display_garak():
                     value=2,
                     help="Number of responses to generate for each probe"
                 )
-                
-                buffer_tokens = st.number_input(
-                    "Buffer Tokens", 
-                    min_value=0, 
-                    max_value=1000, 
-                    value=200,
-                    help="Number of tokens to use as buffer in requests"
-                )
         else:
             num_generations = 3
-            buffer_tokens = 200
     
-    # Horizontal line separator
     st.markdown("---")
     
-    # Run section
     st.subheader("3. Run Scan")
     
     col1, col2 = st.columns([1, 1])
     
     with col1:
-        # Test if garak is installed
         if st.button("✅ Test garak Installation"):
             with st.spinner("Testing garak..."):
                 test_passed, test_output = test_garak()
@@ -485,7 +477,6 @@ def display_garak():
                 st.text_area("Output", test_output, height=200)
     
     with col2:
-        # Run button with validation
         run_disabled = False
         run_tooltip = ""
         
@@ -503,147 +494,216 @@ def display_garak():
             help=run_tooltip if run_disabled else "Start the vulnerability scan"
         )
     
-    # Run the scan
     if run_button:
-        # Validate inputs
         if model_config.get("requires_api_key", False) and not api_key:
             st.error(f"Please provide a {model_type} API key")
         elif not model_name:
             st.error("Please select or enter a model name")
         else:
-            # Create progress container
-            progress_container = st.empty()
-            with progress_container.container():
-                st.info(f"🔄 Starting vulnerability scan on {model_type}/{model_name}...")
-                progress_bar = st.progress(0)
-            
-            # Set the API key as an environment variable if provided
-            original_env = None
-            if api_key and model_config.get("env_var"):
-                original_env = os.environ.get(model_config["env_var"])
-                os.environ[model_config["env_var"]] = api_key
-            
-            try:
-                # Construct the garak command
-                command = [
-                    "python", "-m", "garak",
-                    "--model_type", model_type,
-                    "--model_name", model_name,
-                    "--probes", probe,
-                    "--generations", str(num_generations)
-                ]
+            with st.status("Running vulnerability scan...", expanded=True) as status:
+                st.write(f"Starting scan on {model_type}/{model_name}...")
                 
-                # Don't add buffer_tokens as it's not a valid argument
-                # This caused the error
-                
-                # Add any advanced options
-                if advanced_mode:
-                    try:
-                        model_args_dict = json.loads(model_args)
-                        if model_args_dict:
-                            for key, value in model_args_dict.items():
-                                command.extend([f"--{key}", str(value)])
-                    except (json.JSONDecodeError, NameError):
-                        # If model_args not defined or invalid, ignore
-                        pass
-                
-                # Update progress
-                progress_bar.progress(10)
-                progress_container.info(f"🔄 Running garak with {probe} probe...")
-                
-                # Run garak
-                success, output = run_garak_command(command, timeout=timeout)
-                
-                # Update progress
-                progress_bar.progress(70)
-                
-                if success:
-                    progress_container.info("🔄 Processing results...")
-                    
-                    # Parse results
-                    results = parse_garak_output(output)
-                    
-                    # Save results
-                    save_success, save_path = save_scan_results(
-                        results, model_type, model_name, probe, output
-                    )
-                    
-                    # Extract and copy HTML report
-                    html_report_path = extract_html_report_path(output)
-                    report_path = None
-                    if html_report_path:
-                        report_success, report_path = copy_html_report(html_report_path)
-                        progress_bar.progress(90)
-                    
-                    # Remove progress container and show results
-                    progress_container.empty()
-                    
-                    # Display results
-                    st.success(f"✅ Vulnerability scan completed for {model_type}/{model_name}")
-                    
-                    if results:
-                        # Create result table
-                        st.subheader("📊 Scan Results")
-                        
-                        # Create dataframe for results
-                        results_data = []
-                        for r in results:
-                            status_icon = "✅" if r["result"] == "PASS" else "❌"
-                            results_data.append({
-                                "Probe": r["probe"],
-                                "Status": f"{status_icon} {r['result']}",
-                                "Pass Rate": f"{r['ok_count']}/{r['total_count']} ({r['percentage']:.1f}%)"
-                            })
-                        
-                        # Display as table
-                        st.table(results_data)
-                        
-                        # Show HTML report link if available
-                        if report_path:
-                            st.subheader("📄 Detailed Report")
-                            st.markdown(f"""
-                            <div class="report-container">
-                                <h4>HTML Report Generated</h4>
-                                <p>A detailed HTML report has been generated with comprehensive results.</p>
-                                <a href="./{report_path}" target="_blank">
-                                    <button style="background-color:#4CAF50;color:white;padding:10px 15px;border:none;border-radius:5px;cursor:pointer;">
-                                        Open Full Report
-                                    </button>
-                                </a>
-                            </div>
-                            """, unsafe_allow_html=True)
-                    else:
-                        st.warning("⚠️ No parsed results available. Check the full output below.")
-                    
-                    # Show raw output in expandable section
-                    with st.expander("Full Scan Output", expanded=False):
-                        st.text_area("", output, height=400)
-                        
-                else:
-                    # Error case
-                    progress_container.empty()
-                    st.error("❌ Error running garak")
-                    st.text_area("Error Details", output, height=200)
-                    
-                    # Provide troubleshooting help
-                    st.subheader("🔧 Troubleshooting")
-                    st.markdown("""
-                    Common issues:
-                    - Invalid API key
-                    - Model name not accessible
-                    - Network connection issues
-                    - garak installation problems
-                    
-                    Try running the 'Test garak Installation' button to verify your setup.
-                    """)
-            
-            finally:
-                # Restore original environment variable if it was changed
+                # Set the API key as an environment variable if provided
+                original_env = None
                 if api_key and model_config.get("env_var"):
-                    if original_env:
-                        os.environ[model_config["env_var"]] = original_env
+                    original_env = os.environ.get(model_config["env_var"])
+                    os.environ[model_config["env_var"]] = api_key
+                
+                try:
+                    # Construct the garak command
+                    command = [
+                        "python", "-m", "garak",
+                        "--model_type", model_type,
+                        "--model_name", model_name,
+                        "--probes", probe,
+                        "--generations", str(num_generations)
+                    ]
+                    
+                    # Add advanced options
+                    if advanced_mode:
+                        try:
+                            model_args_dict = json.loads(model_args)
+                            if model_args_dict:
+                                for key, value in model_args_dict.items():
+                                    command.extend([f"--{key}", str(value)])
+                        except (json.JSONDecodeError, NameError):
+                            pass
+                    
+                    st.write(f"Running garak with {probe} probe...")
+                    
+                    # Run garak
+                    start_time = datetime.now()
+                    success, output, stderr = run_garak_command(command, timeout=timeout)
+                    
+                    # Save log to ./reports
+                    log_path = os.path.join(REPORTS_DIR, f"garak_log_{scan_id}.log")
+                    with open(os.path.join(REPORTS_DIR, 'garak_red_teaming.log'), 'r') as log_file:
+                        log_content = log_file.read()
+                    with open(log_path, 'w') as f:
+                        f.write(log_content + f"\nRaw Output:\n{output}\nRaw Stderr:\n{stderr}")
+                    logger.info(f"Log saved to {log_path}")
+                    
+                    if success:
+                        st.write("Processing results...")
+                        
+                        # Parse results
+                        results = parse_garak_output(output)
+                        
+                        # Save results
+                        save_success, json_report_path = save_scan_results(
+                            results, model_type, model_name, probe, output, stderr, scan_id
+                        )
+                        
+                        # Extract and copy HTML report
+                        html_report_path = extract_html_report_path(output)
+                        html_path = None
+                        if html_report_path and os.path.exists(html_report_path):
+                            report_success, html_path = copy_html_report(html_report_path, scan_id)
+                        else:
+                            st.warning("⚠️ No HTML report generated. Check the log for details.")
+                        
+                        # Clean up temporary garak directories
+                        temp_dirs = glob.glob("/tmp/garak.*")
+                        for temp_dir in temp_dirs:
+                            try:
+                                shutil.rmtree(temp_dir)
+                                logger.info(f"Cleaned up temporary directory {temp_dir}")
+                            except Exception as e:
+                                logger.warning(f"Failed to clean up temp directory {temp_dir}: {str(e)}")
+                        
+                        # Update status
+                        status.update(label="Vulnerability scan completed!", state="complete")
+                        
+                        # Display results
+                        st.success(f"✅ Vulnerability scan completed for {model_type}/{model_name}! Report saved to {json_report_path}")
+                        
+                        if results:
+                            st.subheader("📊 Scan Results")
+                            results_data = []
+                            for r in results:
+                                status_icon = "✅" if r["result"] == "PASS" else "❌"
+                                results_data.append({
+                                    "Probe": r["probe"],
+                                    "Status": f"{status_icon} {r['result']}",
+                                    "Pass Rate": f"{r['ok_count']}/{r['total_count']} ({r['percentage']:.1f}%)"
+                                })
+                            st.table(results_data)
+                        else:
+                            st.warning("⚠️ No parsed results available. Check the full output below.")
+                        
+                        st.subheader("📄 Reports")
+                        with open(json_report_path, 'r') as f:
+                            report_json = f.read()
+                        st.download_button(
+                            label="Download JSON Report",
+                            data=report_json,
+                            file_name=f"garak_{scan_id}.json",
+                            mime="application/json"
+                        )
+                        
+                        if html_path and os.path.exists(html_path):
+                            with open(html_path, 'r') as f:
+                                report_html = f.read()
+                            st.download_button(
+                                label="Download HTML Report",
+                                data=report_html,
+                                file_name=f"garak_html_{scan_id}.html",
+                                mime="text/html"
+                            )
+                            # Display HTML report
+                            st.subheader("HTML Report Preview")
+                            st.components.v1.html(report_html, height=600, scrolling=True)
+                        
+                        # Download log
+                        with open(log_path, 'r') as f:
+                            log_content = f.read()
+                        st.download_button(
+                            label="Download Log File",
+                            data=log_content,
+                            file_name=f"garak_log_{scan_id}.log",
+                            mime="text/plain"
+                        )
+                        
+                        # Show raw output
+                        st.subheader("Full Scan Output")
+                        st.text_area("Raw Output", output + f"\n\nStderr:\n{stderr}", height=400)
+                        
+                        # Execution time
+                        execution_time = (datetime.now() - start_time).total_seconds()
+                        st.write(f"**Scan Execution Time**: {execution_time:.2f} seconds")
+                        logger.info(f"Scan completed in {execution_time:.2f} seconds")
+                    
                     else:
-                        os.environ.pop(model_config["env_var"], None)
+                        status.update(label="Vulnerability scan failed", state="error")
+                        st.error("❌ Error running garak")
+                        st.text_area("Error Details", output + f"\n\nStderr:\n{stderr}", height=200)
+                        
+                        # Save error report
+                        error_report = {
+                            "scan_id": scan_id,
+                            "timestamp": datetime.now().isoformat(),
+                            "model_type": model_type,
+                            "model_name": model_name,
+                            "probe": probe,
+                            "error": output,
+                            "stderr": stderr,
+                            "execution_time": (datetime.now() - start_time).total_seconds()
+                        }
+                        json_report_path = os.path.join(REPORTS_DIR, f"garak_{scan_id}.json")
+                        with open(json_report_path, 'w') as f:
+                            json.dump(error_report, f, indent=2)
+                        logger.info(f"Error report saved to {json_report_path}")
+                        
+                        # Download error report
+                        with open(json_report_path, 'r') as f:
+                            report_json = f.read()
+                        st.download_button(
+                            label="Download Error Report",
+                            data=report_json,
+                            file_name=f"garak_{scan_id}.json",
+                            mime="application/json"
+                        )
+                        
+                        # Download log
+                        with open(log_path, 'r') as f:
+                            log_content = f.read()
+                        st.download_button(
+                            label="Download Log File",
+                            data=log_content,
+                            file_name=f"garak_log_{scan_id}.log",
+                            mime="text/plain"
+                        )
+                        
+                        st.subheader("🔧 Troubleshooting")
+                        st.markdown("""
+                        Common issues:
+                        - Invalid API key
+                        - Model name not accessible
+                        - Network connection issues
+                        - garak installation problems
+                        
+                        Try running the 'Test garak Installation' button to verify your setup.
+                        """)
+                
+                except Exception as e:
+                    status.update(label="Unexpected error occurred", state="error")
+                    st.error(f"❌ Unexpected error: {str(e)}")
+                    logger.error(f"Unexpected error during scan: {str(e)}")
+                
+                finally:
+                    if api_key and model_config.get("env_var"):
+                        if original_env:
+                            os.environ[model_config["env_var"]] = original_env
+                        else:
+                            os.environ.pop(model_config["env_var"], None)
+                    # Clean up any remaining /tmp/garak.* directories
+                    temp_dirs = glob.glob("/tmp/garak.*")
+                    for temp_dir in temp_dirs:
+                        try:
+                            shutil.rmtree(temp_dir)
+                            logger.info(f"Cleaned up temporary directory {temp_dir}")
+                        except Exception as e:
+                            logger.warning(f"Failed to clean up temp directory {temp_dir}: {str(e)}")
 
 # Function to get installed Ollama models
 def get_ollama_models():
@@ -657,10 +717,9 @@ def get_ollama_models():
             timeout=10
         )
         
-        # Parse the output to extract model names
         models = []
         for line in result.stdout.strip().split('\n'):
-            if line and not line.startswith('NAME'):  # Skip header line
+            if line and not line.startswith('NAME'):
                 parts = line.split()
                 if parts:
                     models.append(parts[0])
@@ -670,8 +729,8 @@ def get_ollama_models():
             return models
         else:
             logger.warning("No Ollama models found")
-            return ["llama3", "llama2", "mistral", "mixtral"]  # Default models as fallback
+            return ["llama3", "llama2", "mistral", "mixtral"]
             
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as e:
         logger.error(f"Error checking Ollama models: {str(e)}")
-        return ["llama3", "llama2", "mistral", "mixtral"]  # Default models as fallback
+        return ["llama3", "llama2", "mistral", "mixtral"]
